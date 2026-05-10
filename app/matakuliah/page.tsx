@@ -3,11 +3,15 @@
 import Sidebar from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Swal from "sweetalert2";
 
 export default function MataKuliahPage() {
   const BASE_URL = "http://127.0.0.1:8000/matakuliah";
 
+  const router = useRouter();
+
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const [search, setSearch] = useState("");
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -36,6 +40,14 @@ export default function MataKuliahPage() {
 
       const result = await response.json();
 
+      if (response.status === 401) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("token_type");
+        localStorage.removeItem("user");
+        router.push("/login");
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(result.detail || "Gagal mengambil data mata kuliah");
       }
@@ -53,8 +65,16 @@ export default function MataKuliahPage() {
   };
 
   useEffect(() => {
+    const token = localStorage.getItem("token");
+
+    if (!token) {
+      router.push("/login");
+      return;
+    }
+
+    setCheckingAuth(false);
     fetchMataKuliah();
-  }, []);
+  }, [router]);
 
   const openTambahModal = () => {
     setIsEdit(false);
@@ -138,6 +158,14 @@ export default function MataKuliahPage() {
 
       const result = await response.json();
 
+      if (response.status === 401) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("token_type");
+        localStorage.removeItem("user");
+        router.push("/");
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(result.detail || "Gagal menyimpan data");
       }
@@ -185,6 +213,14 @@ export default function MataKuliahPage() {
 
       const result = await response.json();
 
+      if (response.status === 401) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("token_type");
+        localStorage.removeItem("user");
+        router.push("/login");
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(result.detail || "Gagal menghapus data");
       }
@@ -210,6 +246,14 @@ export default function MataKuliahPage() {
   const filtered = data.filter((item) =>
     item.nama_mk?.toLowerCase().includes(search.toLowerCase())
   );
+
+  if (checkingAuth) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-100 text-slate-600">
+        Mengecek login...
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-slate-100">
@@ -292,7 +336,10 @@ export default function MataKuliahPage() {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={5} className="py-6 text-center text-slate-400">
+                      <td
+                        colSpan={5}
+                        className="py-6 text-center text-slate-400"
+                      >
                         Loading data...
                       </td>
                     </tr>
@@ -328,7 +375,10 @@ export default function MataKuliahPage() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={5} className="py-6 text-center text-slate-400">
+                      <td
+                        colSpan={5}
+                        className="py-6 text-center text-slate-400"
+                      >
                         Data tidak ditemukan
                       </td>
                     </tr>
