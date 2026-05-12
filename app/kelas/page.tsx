@@ -8,16 +8,12 @@ import Swal from "sweetalert2";
 
 export default function KelasPage() {
   const router = useRouter();
-
   const KELAS_URL = "http://127.0.0.1:8000/kelas";
-  const MATKUL_URL = "http://127.0.0.1:8000/matakuliah";
 
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
-
   const [data, setData] = useState([]);
-  const [mataKuliah, setMataKuliah] = useState([]);
 
   const [showModal, setShowModal] = useState(false);
   const [isEdit, setIsEdit] = useState(false);
@@ -25,9 +21,6 @@ export default function KelasPage() {
   const [form, setForm] = useState({
     id: "",
     nama_kelas: "",
-    semester: "",
-    tahun_ajaran: "",
-    kode_mk: "",
   });
 
   const getToken = () => localStorage.getItem("token");
@@ -72,35 +65,6 @@ export default function KelasPage() {
     }
   };
 
-  const fetchMataKuliah = async () => {
-    try {
-      const response = await fetch(`${MATKUL_URL}/`, {
-        headers: {
-          Authorization: `Bearer ${getToken()}`,
-        },
-      });
-
-      const result = await response.json();
-
-      if (response.status === 401) {
-        handleUnauthorized();
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error(result.detail || "Gagal mengambil data mata kuliah");
-      }
-
-      setMataKuliah(result);
-    } catch (error) {
-      Swal.fire({
-        icon: "error",
-        title: "Gagal",
-        text: error.message || "Terjadi kesalahan",
-      });
-    }
-  };
-
   useEffect(() => {
     const token = localStorage.getItem("token");
 
@@ -111,7 +75,6 @@ export default function KelasPage() {
 
     setCheckingAuth(false);
     fetchKelas();
-    fetchMataKuliah();
   }, [router]);
 
   const openTambahModal = () => {
@@ -120,9 +83,6 @@ export default function KelasPage() {
     setForm({
       id: "",
       nama_kelas: "",
-      semester: "",
-      tahun_ajaran: "",
-      kode_mk: "",
     });
   };
 
@@ -132,9 +92,6 @@ export default function KelasPage() {
     setForm({
       id: item.id || "",
       nama_kelas: item.nama_kelas || "",
-      semester: item.semester || "",
-      tahun_ajaran: item.tahun_ajaran || "",
-      kode_mk: item.kode_mk || "",
     });
   };
 
@@ -144,29 +101,17 @@ export default function KelasPage() {
     setForm({
       id: "",
       nama_kelas: "",
-      semester: "",
-      tahun_ajaran: "",
-      kode_mk: "",
     });
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!form.nama_kelas || !form.semester || !form.tahun_ajaran || !form.kode_mk) {
+    if (!form.nama_kelas) {
       Swal.fire({
         icon: "warning",
         title: "Data belum lengkap",
-        text: "Nama kelas, semester, tahun ajaran, dan mata kuliah wajib diisi",
-      });
-      return;
-    }
-
-    if (Number(form.semester) < 1) {
-      Swal.fire({
-        icon: "warning",
-        title: "Semester tidak valid",
-        text: "Semester tidak boleh kurang dari 1",
+        text: "Nama kelas wajib diisi",
       });
       return;
     }
@@ -182,9 +127,6 @@ export default function KelasPage() {
         },
         body: JSON.stringify({
           nama_kelas: form.nama_kelas,
-          semester: Number(form.semester),
-          tahun_ajaran: form.tahun_ajaran,
-          kode_mk: form.kode_mk,
         }),
       });
 
@@ -335,9 +277,6 @@ export default function KelasPage() {
                 <thead>
                   <tr className="border-b border-slate-200 text-left text-slate-500">
                     <th className="py-3">Nama Kelas</th>
-                    <th>Semester</th>
-                    <th>Tahun Ajaran</th>
-                    <th>Kode MK</th>
                     <th>Aksi</th>
                   </tr>
                 </thead>
@@ -345,7 +284,7 @@ export default function KelasPage() {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={5} className="py-6 text-center text-slate-400">
+                      <td colSpan={2} className="py-6 text-center text-slate-400">
                         Loading data...
                       </td>
                     </tr>
@@ -358,9 +297,6 @@ export default function KelasPage() {
                         <td className="py-4 font-medium text-slate-800">
                           {item.nama_kelas}
                         </td>
-                        <td className="text-slate-700">{item.semester}</td>
-                        <td className="text-slate-700">{item.tahun_ajaran}</td>
-                        <td className="text-slate-700">{item.kode_mk}</td>
 
                         <td className="flex gap-2 py-3">
                           <button
@@ -381,7 +317,7 @@ export default function KelasPage() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={5} className="py-6 text-center text-slate-400">
+                      <td colSpan={2} className="py-6 text-center text-slate-400">
                         Data tidak ditemukan
                       </td>
                     </tr>
@@ -425,42 +361,6 @@ export default function KelasPage() {
                   }
                   className="w-full rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-800 outline-none"
                 />
-
-                <input
-                  type="number"
-                  min="1"
-                  placeholder="Semester"
-                  value={form.semester}
-                  onChange={(e) =>
-                    setForm({ ...form, semester: e.target.value })
-                  }
-                  className="w-full rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-800 outline-none"
-                />
-
-                <input
-                  type="text"
-                  placeholder="Tahun Ajaran, contoh: 2025/2026"
-                  value={form.tahun_ajaran}
-                  onChange={(e) =>
-                    setForm({ ...form, tahun_ajaran: e.target.value })
-                  }
-                  className="w-full rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-800 outline-none"
-                />
-
-                <select
-                  value={form.kode_mk}
-                  onChange={(e) =>
-                    setForm({ ...form, kode_mk: e.target.value })
-                  }
-                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 outline-none"
-                >
-                  <option value="">Pilih Mata Kuliah</option>
-                  {mataKuliah.map((item) => (
-                    <option key={item.kode_mk} value={item.kode_mk}>
-                      {item.kode_mk} - {item.nama_mk}
-                    </option>
-                  ))}
-                </select>
 
                 <div className="flex justify-end gap-3 pt-4">
                   <button

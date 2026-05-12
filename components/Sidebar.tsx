@@ -84,9 +84,9 @@ export default function Sidebar() {
           Mata Kuliah
         </Link>
 
-        <Link href="/kelas" className={menuClass("/kelas")}>
+        {/* <Link href="/kelas" className={menuClass("/kelas")}>
           Kelas
-        </Link>
+        </Link> */}
 
         <Link href="/mahasiswa" className={menuClass("/mahasiswa")}>
           Mahasiswa
