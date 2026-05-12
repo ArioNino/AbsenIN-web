@@ -12,30 +12,18 @@ export default function Sidebar() {
 
   useEffect(() => {
     const storedUser = localStorage.getItem("user");
+
     if (storedUser) {
       setUser(JSON.parse(storedUser));
     }
   }, []);
 
-  const handleLogout = async () => {
-    try {
-      const token = localStorage.getItem("token");
-
-      await fetch("http://127.0.0.1:8000/logout", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-      });
-    } catch (error) {
-      console.log("Logout API gagal:", error);
-    }
-
+  const handleLogout = () => {
     localStorage.removeItem("token");
+    localStorage.removeItem("token_type");
     localStorage.removeItem("user");
 
-    router.push("/");
+    router.push("/login");
   };
 
   const menuClass = (path: string) =>
@@ -72,10 +60,7 @@ export default function Sidebar() {
           Dashboard
         </Link>
 
-        <Link
-          href="/presensi"
-          className={menuClass("/presensi")}
-        >
+        <Link href="/presensi" className={menuClass("/presensi")}>
           <span className="w-2 h-2 bg-white/20 rounded-full"></span>
           Presensi Realtime
           <span className="ml-auto text-xs bg-red-500 px-2 rounded-full">
@@ -93,17 +78,15 @@ export default function Sidebar() {
           Berita Acara Perkuliahan
         </Link>
 
-        <p className="text-white/30 text-xs px-3 mt-4 uppercase">
-          Akademik
-        </p>
+        <p className="text-white/30 text-xs px-3 mt-4 uppercase">Akademik</p>
 
         <Link href="/matakuliah" className={menuClass("/matakuliah")}>
           Mata Kuliah
         </Link>
 
-        <Link href="/jadwal" className={menuClass("/jadwal")}>
-          Jadwal
-        </Link>
+        {/* <Link href="/kelas" className={menuClass("/kelas")}>
+          Kelas
+        </Link> */}
 
         <Link href="/mahasiswa" className={menuClass("/mahasiswa")}>
           Mahasiswa
@@ -118,9 +101,7 @@ export default function Sidebar() {
           </div>
 
           <div>
-            <p className="text-sm">
-              {user?.name || "User"}
-            </p>
+            <p className="text-sm">{user?.name || "User"}</p>
 
             <p className="text-xs text-white/40">
               {user?.role || "Role"}
@@ -128,7 +109,6 @@ export default function Sidebar() {
           </div>
         </div>
 
-        {/* LOGOUT */}
         <button
           onClick={handleLogout}
           className="w-full rounded-lg bg-red-500 py-2 text-sm font-medium hover:bg-red-600 transition-all duration-200"

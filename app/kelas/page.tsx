@@ -6,25 +6,21 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Swal from "sweetalert2";
 
-export default function MahasiswaPage() {
-  const BASE_URL = "http://127.0.0.1:8000/mahasiswa";
-
+export default function KelasPage() {
   const router = useRouter();
+  const KELAS_URL = "http://127.0.0.1:8000/kelas";
 
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(false);
 
   const [showModal, setShowModal] = useState(false);
   const [isEdit, setIsEdit] = useState(false);
 
   const [form, setForm] = useState({
-    id_mahasiswa: "",
-    nim: "",
-    nama: "",
-    kelas: "",
-    prodi: "",
+    id: "",
+    nama_kelas: "",
   });
 
   const getToken = () => localStorage.getItem("token");
@@ -36,11 +32,11 @@ export default function MahasiswaPage() {
     router.push("/login");
   };
 
-  const fetchMahasiswa = async () => {
+  const fetchKelas = async () => {
     setLoading(true);
 
     try {
-      const response = await fetch(`${BASE_URL}/`, {
+      const response = await fetch(`${KELAS_URL}/`, {
         headers: {
           Authorization: `Bearer ${getToken()}`,
         },
@@ -54,7 +50,7 @@ export default function MahasiswaPage() {
       }
 
       if (!response.ok) {
-        throw new Error(result.detail || "Gagal mengambil data mahasiswa");
+        throw new Error(result.detail || "Gagal mengambil data kelas");
       }
 
       setData(result);
@@ -78,18 +74,15 @@ export default function MahasiswaPage() {
     }
 
     setCheckingAuth(false);
-    fetchMahasiswa();
+    fetchKelas();
   }, [router]);
 
   const openTambahModal = () => {
     setIsEdit(false);
     setShowModal(true);
     setForm({
-      id_mahasiswa: "",
-      nim: "",
-      nama: "",
-      kelas: "",
-      prodi: "",
+      id: "",
+      nama_kelas: "",
     });
   };
 
@@ -97,11 +90,8 @@ export default function MahasiswaPage() {
     setIsEdit(true);
     setShowModal(true);
     setForm({
-      id_mahasiswa: item.id_mahasiswa || "",
-      nim: item.nim || "",
-      nama: item.nama || "",
-      kelas: item.kelas || "",
-      prodi: item.prodi || "",
+      id: item.id || "",
+      nama_kelas: item.nama_kelas || "",
     });
   };
 
@@ -109,30 +99,25 @@ export default function MahasiswaPage() {
     setShowModal(false);
     setIsEdit(false);
     setForm({
-      id_mahasiswa: "",
-      nim: "",
-      nama: "",
-      kelas: "",
-      prodi: "",
+      id: "",
+      nama_kelas: "",
     });
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!form.nim || !form.nama || !form.kelas || !form.prodi) {
+    if (!form.nama_kelas) {
       Swal.fire({
         icon: "warning",
         title: "Data belum lengkap",
-        text: "Semua field wajib diisi",
+        text: "Nama kelas wajib diisi",
       });
       return;
     }
 
     try {
-      const url = isEdit
-        ? `${BASE_URL}/${form.id_mahasiswa}`
-        : `${BASE_URL}/`;
+      const url = isEdit ? `${KELAS_URL}/${form.id}` : `${KELAS_URL}/`;
 
       const response = await fetch(url, {
         method: isEdit ? "PUT" : "POST",
@@ -141,14 +126,11 @@ export default function MahasiswaPage() {
           Authorization: `Bearer ${getToken()}`,
         },
         body: JSON.stringify({
-          nim: form.nim,
-          nama: form.nama,
-          kelas: form.kelas,
-          prodi: form.prodi,
+          nama_kelas: form.nama_kelas,
         }),
       });
 
-      const result = await response.json();
+      const result = response.status === 204 ? null : await response.json();
 
       if (response.status === 401) {
         handleUnauthorized();
@@ -156,16 +138,16 @@ export default function MahasiswaPage() {
       }
 
       if (!response.ok) {
-        throw new Error(result.detail || "Gagal menyimpan data mahasiswa");
+        throw new Error(result?.detail || "Gagal menyimpan data kelas");
       }
 
       closeModal();
-      fetchMahasiswa();
+      fetchKelas();
 
       Swal.fire({
         icon: "success",
         title: "Berhasil",
-        text: result.message || "Data mahasiswa berhasil disimpan",
+        text: isEdit ? "Kelas berhasil diupdate" : "Kelas berhasil ditambahkan",
         timer: 1500,
         showConfirmButton: false,
       });
@@ -178,10 +160,10 @@ export default function MahasiswaPage() {
     }
   };
 
-  const handleDelete = async (id_mahasiswa) => {
+  const handleDelete = async (id) => {
     const confirmDelete = await Swal.fire({
       title: "Yakin ingin menghapus?",
-      text: "Data mahasiswa akan dihapus permanen",
+      text: "Data kelas akan dihapus permanen",
       icon: "warning",
       showCancelButton: true,
       confirmButtonColor: "#ef4444",
@@ -193,14 +175,14 @@ export default function MahasiswaPage() {
     if (!confirmDelete.isConfirmed) return;
 
     try {
-      const response = await fetch(`${BASE_URL}/${id_mahasiswa}`, {
+      const response = await fetch(`${KELAS_URL}/${id}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${getToken()}`,
         },
       });
 
-      const result = await response.json();
+      const result = response.status === 204 ? null : await response.json();
 
       if (response.status === 401) {
         handleUnauthorized();
@@ -208,15 +190,15 @@ export default function MahasiswaPage() {
       }
 
       if (!response.ok) {
-        throw new Error(result.detail || "Gagal menghapus data mahasiswa");
+        throw new Error(result?.detail || "Gagal menghapus data kelas");
       }
 
-      fetchMahasiswa();
+      fetchKelas();
 
       Swal.fire({
         icon: "success",
         title: "Berhasil",
-        text: result.message || "Data mahasiswa berhasil dihapus",
+        text: "Kelas berhasil dihapus",
         timer: 1500,
         showConfirmButton: false,
       });
@@ -230,7 +212,7 @@ export default function MahasiswaPage() {
   };
 
   const filtered = data.filter((item) =>
-    item.nama?.toLowerCase().includes(search.toLowerCase())
+    item.nama_kelas?.toLowerCase().includes(search.toLowerCase())
   );
 
   if (checkingAuth) {
@@ -246,26 +228,36 @@ export default function MahasiswaPage() {
       <Sidebar />
 
       <main className="flex-1 ml-60">
-        <Topbar title="Mahasiswa" subtitle="Kelola data mahasiswa" />
+        <Topbar title="Kelas" subtitle="Kelola data kelas perkuliahan" />
 
         <div className="p-6 space-y-6">
           <div className="rounded-3xl bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 text-white shadow-lg">
-            <h1 className="text-2xl font-bold">Data Mahasiswa</h1>
-            <p className="text-sm text-slate-300 mt-2">
-              Daftar mahasiswa terdaftar
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-5">
+              <div>
+                <p className="text-sm text-cyan-400">Sistem Akademik</p>
+                <h1 className="mt-2 text-2xl font-bold">Manajemen Kelas</h1>
+                <p className="mt-2 text-sm text-slate-300">
+                  Tambah, ubah, dan kelola data kelas.
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-white/10 px-5 py-4 text-center border border-white/10">
+                <p className="text-xl font-bold">{data.length}</p>
+                <span className="text-xs text-slate-300">Total Kelas</span>
+              </div>
+            </div>
           </div>
 
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-semibold text-slate-800">
-                Daftar Mahasiswa
+                Daftar Kelas
               </h2>
 
               <div className="flex gap-3">
                 <input
                   type="text"
-                  placeholder="Cari mahasiswa..."
+                  placeholder="Cari kelas..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-cyan-400"
@@ -284,10 +276,7 @@ export default function MahasiswaPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-left text-slate-500">
-                    <th className="py-3">NIM</th>
-                    <th>Nama</th>
-                    <th>Kelas</th>
-                    <th>Prodi</th>
+                    <th className="py-3">Nama Kelas</th>
                     <th>Aksi</th>
                   </tr>
                 </thead>
@@ -295,25 +284,19 @@ export default function MahasiswaPage() {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td
-                        colSpan={5}
-                        className="text-center py-6 text-slate-400"
-                      >
+                      <td colSpan={2} className="py-6 text-center text-slate-400">
                         Loading data...
                       </td>
                     </tr>
                   ) : filtered.length > 0 ? (
                     filtered.map((item) => (
                       <tr
-                        key={item.id_mahasiswa}
+                        key={item.id}
                         className="border-b border-slate-100 hover:bg-slate-50"
                       >
                         <td className="py-4 font-medium text-slate-800">
-                          {item.nim}
+                          {item.nama_kelas}
                         </td>
-                        <td className="text-slate-700">{item.nama}</td>
-                        <td className="text-slate-700">{item.kelas}</td>
-                        <td className="text-slate-700">{item.prodi}</td>
 
                         <td className="flex gap-2 py-3">
                           <button
@@ -324,9 +307,7 @@ export default function MahasiswaPage() {
                           </button>
 
                           <button
-                            onClick={() =>
-                              handleDelete(item.id_mahasiswa)
-                            }
+                            onClick={() => handleDelete(item.id)}
                             className="rounded-lg bg-red-100 px-3 py-1 text-xs text-red-700 hover:bg-red-200"
                           >
                             Hapus
@@ -336,10 +317,7 @@ export default function MahasiswaPage() {
                     ))
                   ) : (
                     <tr>
-                      <td
-                        colSpan={5}
-                        className="text-center py-6 text-slate-400"
-                      >
+                      <td colSpan={2} className="py-6 text-center text-slate-400">
                         Data tidak ditemukan
                       </td>
                     </tr>
@@ -356,12 +334,12 @@ export default function MahasiswaPage() {
               <div className="mb-5 flex items-center justify-between">
                 <div>
                   <h2 className="text-xl font-bold text-slate-800">
-                    {isEdit ? "Edit Mahasiswa" : "Tambah Mahasiswa"}
+                    {isEdit ? "Edit Kelas" : "Tambah Kelas"}
                   </h2>
                   <p className="text-sm text-slate-500">
                     {isEdit
-                      ? "Ubah data mahasiswa yang dipilih"
-                      : "Masukkan data mahasiswa baru"}
+                      ? "Ubah data kelas yang dipilih"
+                      : "Masukkan data kelas baru"}
                   </p>
                 </div>
 
@@ -376,40 +354,10 @@ export default function MahasiswaPage() {
               <form onSubmit={handleSubmit} className="space-y-4">
                 <input
                   type="text"
-                  placeholder="NIM"
-                  value={form.nim}
+                  placeholder="Nama Kelas"
+                  value={form.nama_kelas}
                   onChange={(e) =>
-                    setForm({ ...form, nim: e.target.value })
-                  }
-                  className="w-full rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-800 outline-none"
-                />
-
-                <input
-                  type="text"
-                  placeholder="Nama Mahasiswa"
-                  value={form.nama}
-                  onChange={(e) =>
-                    setForm({ ...form, nama: e.target.value })
-                  }
-                  className="w-full rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-800 outline-none"
-                />
-
-                <input
-                  type="text"
-                  placeholder="Kelas"
-                  value={form.kelas}
-                  onChange={(e) =>
-                    setForm({ ...form, kelas: e.target.value })
-                  }
-                  className="w-full rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-800 outline-none"
-                />
-
-                <input
-                  type="text"
-                  placeholder="Program Studi"
-                  value={form.prodi}
-                  onChange={(e) =>
-                    setForm({ ...form, prodi: e.target.value })
+                    setForm({ ...form, nama_kelas: e.target.value })
                   }
                   className="w-full rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-800 outline-none"
                 />
