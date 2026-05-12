@@ -1,32 +1,162 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Webcam from "react-webcam";
 import Sidebar from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
 
+type FaceResult = {
+  face_index: number;
+  nim: string | null;
+  nama: string | null;
+  prodi: string | null;
+  confidence: number;
+  detection_confidence: number | null;
+  bbox: number[] | null;
+  recognized: boolean;
+  mahasiswa_found: boolean;
+};
+
+type LogItem = {
+  nama: string;
+  nim: string;
+  prodi: string;
+  jam: string;
+  confidence: string;
+  status: string;
+};
+
+const VIDEO_WIDTH = 640;
+const VIDEO_HEIGHT = 480;
+
 export default function PresensiRealtimePage() {
   const [cameraOn, setCameraOn] = useState(false);
-  const [detected] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [lastFace, setLastFace] = useState<FaceResult | null>(null);
+  const [logs, setLogs] = useState<LogItem[]>([]);
 
-  const cameraRef = useRef<HTMLDivElement>(null);
+  const cameraContainerRef = useRef<HTMLDivElement>(null);
+  const webcamRef = useRef<Webcam>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const loadingRef = useRef(false);
 
   const handleFullscreen = () => {
-    if (!cameraRef.current) return;
+    if (!cameraContainerRef.current) return;
 
     if (document.fullscreenElement) {
       document.exitFullscreen();
     } else {
-      cameraRef.current.requestFullscreen();
+      cameraContainerRef.current.requestFullscreen();
     }
   };
 
-  const logs = [
-    ["Rizky Darmawan", "21TK001", "Teknik Informatika", "07:41", "98%", "Terlambat"],
-    ["Nadia Sari", "21TK048", "Sistem Informasi", "07:43", "97%", "Hadir"],
-    ["Unknown Face", "-", "-", "07:44", "60%", "Unknown"],
-    ["Lestari Putri", "22TK011", "Teknik Informatika", "07:46", "99%", "Hadir"],
-  ];
+  const getScaledBox = () => {
+    if (!lastFace?.bbox || !cameraContainerRef.current) return null;
+
+    const [x1, y1, x2, y2] = lastFace.bbox;
+
+    const containerWidth = cameraContainerRef.current.clientWidth;
+    const containerHeight = cameraContainerRef.current.clientHeight;
+
+    const scaleX = containerWidth / VIDEO_WIDTH;
+    const scaleY = containerHeight / VIDEO_HEIGHT;
+
+    return {
+      left: x1 * scaleX,
+      top: y1 * scaleY,
+      width: (x2 - x1) * scaleX,
+      height: (y2 - y1) * scaleY,
+    };
+  };
+
+  const handleRecognize = async () => {
+    if (loadingRef.current) return;
+
+    try {
+      loadingRef.current = true;
+      setLoading(true);
+
+      const screenshot = webcamRef.current?.getScreenshot();
+
+      if (!screenshot) return;
+
+      const blob = await fetch(screenshot).then((res) => res.blob());
+
+      const formData = new FormData();
+      formData.append("file", blob, "face.jpg");
+
+      const response = await fetch(
+        "http://127.0.0.1:8000/face-recognition/recognize",
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.detail || "Gagal deteksi wajah");
+      }
+
+      const face: FaceResult | null = result.data?.[0] ?? null;
+
+      setLastFace(face);
+
+      if (face) {
+        const now = new Date();
+
+        const jam = now.toLocaleTimeString("id-ID", {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+
+        const newLog: LogItem = {
+          nama: face.nama ?? "Unknown Face",
+          nim: face.nim ?? "-",
+          prodi: face.prodi ?? "-",
+          jam,
+          confidence: `${(face.confidence * 100).toFixed(2)}%`,
+          status: face.recognized ? "Hadir" : "Unknown",
+        };
+
+        setLogs((prev) => [newLog, ...prev].slice(0, 10));
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      loadingRef.current = false;
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!cameraOn) {
+      setLastFace(null);
+
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+
+      return;
+    }
+
+    intervalRef.current = setInterval(() => {
+      handleRecognize();
+    }, 1500);
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [cameraOn]);
+
+  const box = getScaledBox();
+
+  const confidenceText = lastFace
+    ? `${(lastFace.confidence * 100).toFixed(2)}%`
+    : "-";
 
   return (
     <div className="flex min-h-screen bg-slate-100">
@@ -53,23 +183,29 @@ export default function PresensiRealtimePage() {
                 </h1>
 
                 <p className="mt-2 text-sm text-slate-300">
-                  Kamera sedang memantau area masuk kelas.
+                  Kamera sedang memantau area masuk kelas secara realtime.
                 </p>
               </div>
 
               <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-2xl bg-white/10 px-5 py-4 text-center border border-white/10">
-                  <p className="text-xl font-bold text-white">98.7%</p>
-                  <span className="text-xs text-slate-300">Akurasi</span>
+                <div className="rounded-2xl border border-white/10 bg-white/10 px-5 py-4 text-center">
+                  <p className="text-xl font-bold text-white">
+                    {confidenceText}
+                  </p>
+                  <span className="text-xs text-slate-300">Confidence</span>
                 </div>
 
-                <div className="rounded-2xl bg-white/10 px-5 py-4 text-center border border-white/10">
-                  <p className="text-xl font-bold text-white">127</p>
-                  <span className="text-xs text-slate-300">Scan Hari Ini</span>
+                <div className="rounded-2xl border border-white/10 bg-white/10 px-5 py-4 text-center">
+                  <p className="text-xl font-bold text-white">
+                    {logs.length}
+                  </p>
+                  <span className="text-xs text-slate-300">
+                    Scan Hari Ini
+                  </span>
                 </div>
 
-                <div className="rounded-2xl bg-white/10 px-5 py-4 text-center border border-white/10">
-                  <p className="text-xl font-bold text-white">4</p>
+                <div className="rounded-2xl border border-white/10 bg-white/10 px-5 py-4 text-center">
+                  <p className="text-xl font-bold text-white">1</p>
                   <span className="text-xs text-slate-300">Kamera</span>
                 </div>
               </div>
@@ -107,23 +243,44 @@ export default function PresensiRealtimePage() {
               </div>
 
               <div
-                ref={cameraRef}
+                ref={cameraContainerRef}
                 className="relative flex h-[520px] items-center justify-center overflow-hidden rounded-3xl bg-black"
               >
                 {cameraOn ? (
                   <>
                     <Webcam
+                      ref={webcamRef}
                       audio={false}
                       mirrored
-                      className="h-full w-full object-cover"
+                      screenshotFormat="image/jpeg"
+                      videoConstraints={{
+                        width: VIDEO_WIDTH,
+                        height: VIDEO_HEIGHT,
+                        facingMode: "user",
+                      }}
+                      className="h-full w-full object-fill"
                     />
 
-                    {detected && (
+                    {box && (
                       <>
-                        <div className="absolute left-24 top-24 h-52 w-44 rounded-xl border-[3px] border-cyan-400"></div>
+                        <div
+                          className="absolute rounded-xl border-[3px] border-cyan-400 transition-all duration-200"
+                          style={{
+                            left: `${box.left}px`,
+                            top: `${box.top}px`,
+                            width: `${box.width}px`,
+                            height: `${box.height}px`,
+                          }}
+                        />
 
-                        <div className="absolute left-24 top-[74px] rounded-full bg-cyan-500 px-3 py-1 text-xs font-medium text-white shadow">
-                          Rizky Darmawan • 98%
+                        <div
+                          className="absolute rounded-full bg-cyan-500 px-3 py-1 text-xs font-medium text-white shadow transition-all duration-200"
+                          style={{
+                            left: `${box.left}px`,
+                            top: `${Math.max(box.top - 36, 10)}px`,
+                          }}
+                        >
+                          {lastFace?.nama ?? "Unknown"} • {confidenceText}
                         </div>
                       </>
                     )}
@@ -133,7 +290,7 @@ export default function PresensiRealtimePage() {
                     </div>
 
                     <div className="absolute right-4 top-4 rounded-full bg-red-500 px-3 py-1 text-xs font-medium text-white animate-pulse">
-                      LIVE
+                      {loading ? "SCANNING" : "LIVE"}
                     </div>
                   </>
                 ) : (
@@ -141,6 +298,7 @@ export default function PresensiRealtimePage() {
                     <p className="text-xl font-semibold text-white">
                       Kamera Nonaktif
                     </p>
+
                     <p className="mt-2 text-sm text-slate-300">
                       Tekan tombol nyalakan kamera
                     </p>
@@ -157,34 +315,61 @@ export default function PresensiRealtimePage() {
                 </h3>
 
                 <div className="space-y-4">
-                  <div className="rounded-2xl border border-green-200 bg-green-50 p-4">
-                    <p className="text-sm text-slate-500">Nama</p>
+                  <div
+                    className={`rounded-2xl border p-4 ${
+                      lastFace?.recognized
+                        ? "border-green-200 bg-green-50"
+                        : "border-red-200 bg-red-50"
+                    }`}
+                  >
+                    <p className="text-sm text-slate-500">Status Deteksi</p>
+
                     <p className="text-lg font-semibold text-slate-800">
-                      Rizky Darmawan
+                      {!lastFace
+                        ? "Belum ada scan"
+                        : lastFace.recognized
+                        ? "Wajah dikenali"
+                        : "Wajah tidak dikenali"}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl bg-slate-100 p-4">
+                    <p className="text-sm text-slate-500">Nama</p>
+
+                    <p className="font-medium text-slate-800">
+                      {lastFace?.nama ?? "-"}
                     </p>
                   </div>
 
                   <div className="rounded-2xl bg-slate-100 p-4">
                     <p className="text-sm text-slate-500">NIM</p>
-                    <p className="font-medium text-slate-800">21TK001</p>
+
+                    <p className="font-medium text-slate-800">
+                      {lastFace?.nim ?? "-"}
+                    </p>
                   </div>
 
                   <div className="rounded-2xl bg-slate-100 p-4">
                     <p className="text-sm text-slate-500">Program Studi</p>
+
                     <p className="font-medium text-slate-800">
-                      Teknik Informatika
+                      {lastFace?.prodi ?? "-"}
                     </p>
                   </div>
 
                   <div className="rounded-2xl bg-slate-100 p-4">
                     <p className="text-sm text-slate-500">Confidence</p>
-                    <p className="font-medium text-cyan-600">98%</p>
+
+                    <p className="font-medium text-cyan-600">
+                      {confidenceText}
+                    </p>
                   </div>
 
-                  <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-4">
+                  <div className="rounded-2xl border border-green-200 bg-green-50 p-4">
                     <p className="text-sm text-slate-500">Status</p>
-                    <span className="mt-1 inline-block rounded-full bg-yellow-200 px-3 py-1 text-xs font-medium text-yellow-800">
-                      Terlambat
+
+                    <span className="mt-1 inline-block rounded-full bg-green-200 px-3 py-1 text-xs font-medium text-green-800">
+                      {lastFace?.recognized ? "Hadir" : "-"}
                     </span>
                   </div>
                 </div>
@@ -196,32 +381,23 @@ export default function PresensiRealtimePage() {
                 </h3>
 
                 <div className="space-y-4 text-sm">
-                  <div>
-                    <p className="font-medium text-slate-800">
-                      Rizky Darmawan
-                    </p>
+                  {logs.length === 0 ? (
                     <p className="text-slate-500">
-                      Terlambat • 07:41
+                      Belum ada aktivitas realtime
                     </p>
-                  </div>
+                  ) : (
+                    logs.slice(0, 3).map((item, index) => (
+                      <div key={index}>
+                        <p className="font-medium text-slate-800">
+                          {item.nama}
+                        </p>
 
-                  <div>
-                    <p className="font-medium text-slate-800">
-                      Nadia Sari
-                    </p>
-                    <p className="text-slate-500">
-                      Hadir • 07:43
-                    </p>
-                  </div>
-
-                  <div>
-                    <p className="font-medium text-slate-800">
-                      Unknown Face
-                    </p>
-                    <p className="text-slate-500">
-                      Tidak dikenali • 07:44
-                    </p>
-                  </div>
+                        <p className="text-slate-500">
+                          {item.status} • {item.jam}
+                        </p>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -255,33 +431,46 @@ export default function PresensiRealtimePage() {
                 </thead>
 
                 <tbody>
-                  {logs.map((item, i) => (
-                    <tr
-                      key={i}
-                      className="border-b border-slate-100 hover:bg-slate-50"
-                    >
-                      <td className="py-4 text-slate-800">{item[0]}</td>
-                      <td className="text-slate-700">{item[1]}</td>
-                      <td className="text-slate-700">{item[2]}</td>
-                      <td className="text-slate-700">{item[3]}</td>
-                      <td className="font-medium text-slate-800">
-                        {item[4]}
-                      </td>
-                      <td>
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-medium ${
-                            item[5] === "Hadir"
-                              ? "bg-green-100 text-green-700"
-                              : item[5] === "Terlambat"
-                              ? "bg-yellow-100 text-yellow-700"
-                              : "bg-red-100 text-red-700"
-                          }`}
-                        >
-                          {item[5]}
-                        </span>
+                  {logs.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="py-6 text-center text-slate-500"
+                      >
+                        Belum ada data presensi
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    logs.map((item, i) => (
+                      <tr
+                        key={i}
+                        className="border-b border-slate-100 hover:bg-slate-50"
+                      >
+                        <td className="py-4 text-slate-800">{item.nama}</td>
+                        <td className="text-slate-700">{item.nim}</td>
+                        <td className="text-slate-700">{item.prodi}</td>
+                        <td className="text-slate-700">{item.jam}</td>
+
+                        <td className="font-medium text-slate-800">
+                          {item.confidence}
+                        </td>
+
+                        <td>
+                          <span
+                            className={`rounded-full px-3 py-1 text-xs font-medium ${
+                              item.status === "Hadir"
+                                ? "bg-green-100 text-green-700"
+                                : item.status === "Terlambat"
+                                ? "bg-yellow-100 text-yellow-700"
+                                : "bg-red-100 text-red-700"
+                            }`}
+                          >
+                            {item.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
