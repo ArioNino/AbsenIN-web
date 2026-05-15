@@ -157,19 +157,18 @@ export default function PresensiRealtimePage() {
     };
   };
 
-  const getAttendanceStatus = () => {
-    if (!activeBap?.waktu_selesai) return "Hadir";
+  const getStatusFromBackend = (message?: string) => {
+    if (!message) return "Unknown";
 
-    const now = new Date();
-    const [endHour, endMinute] = activeBap.waktu_selesai.split(":");
+    if (message.toLowerCase().includes("terlambat")) {
+      return "Terlambat";
+    }
 
-    const endTime = new Date();
-    endTime.setHours(Number(endHour));
-    endTime.setMinutes(Number(endMinute));
-    endTime.setSeconds(0);
-    endTime.setMilliseconds(0);
+    if (message.toLowerCase().includes("hadir")) {
+      return "Hadir";
+    }
 
-    return now > endTime ? "Terlambat" : "Hadir";
+    return "Unknown";
   };
 
   const handleRecognize = async () => {
@@ -180,9 +179,16 @@ export default function PresensiRealtimePage() {
       setLoading(true);
 
       const token = localStorage.getItem("token");
+      const activeBapData = localStorage.getItem("active_bap");
+      const bap = activeBapData ? JSON.parse(activeBapData) : null;
 
       if (!token) {
         router.push("/login");
+        return;
+      }
+
+      if (!bap?.id) {
+        router.push("/bap");
         return;
       }
 
@@ -192,18 +198,17 @@ export default function PresensiRealtimePage() {
       const blob = await fetch(screenshot).then((res) => res.blob());
 
       const formData = new FormData();
+      formData.append("id_bap", String(bap.id));
+      formData.append("mode", "single");
       formData.append("file", blob, "face.jpg");
 
-      const response = await fetch(
-        "http://127.0.0.1:8000/face-recognition/recognize",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          body: formData,
-        }
-      );
+      const response = await fetch("http://127.0.0.1:8000/kehadiran/recognize", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
 
       if (response.status === 401 || response.status === 403) {
         localStorage.removeItem("token");
@@ -217,7 +222,22 @@ export default function PresensiRealtimePage() {
         throw new Error(result.detail || "Gagal deteksi wajah");
       }
 
-      const face: FaceResult | null = result.data?.[0] ?? null;
+      const item = result.results?.[0] ?? null;
+
+      const face: FaceResult | null = item
+        ? {
+            face_index: item.face_index,
+            nim: item.nim,
+            nama: item.mahasiswa?.nama ?? null,
+            prodi: item.mahasiswa?.prodi ?? null,
+            confidence: item.confidence,
+            detection_confidence: item.detection_confidence,
+            bbox: item.bbox,
+            recognized: Boolean(item.mahasiswa),
+            mahasiswa_found: Boolean(item.mahasiswa),
+          }
+        : null;
+
       setLastFace(face);
 
       if (face) {
@@ -228,7 +248,9 @@ export default function PresensiRealtimePage() {
           minute: "2-digit",
         });
 
-        const status = face.recognized ? getAttendanceStatus() : "Unknown";
+        const status = face.recognized
+          ? getStatusFromBackend(item?.message)
+          : "Unknown";
 
         setLastStatus(status);
 
@@ -553,12 +575,6 @@ export default function PresensiRealtimePage() {
               <h2 className="text-lg font-semibold text-slate-800">
                 Riwayat Presensi Hari Ini
               </h2>
-
-              <input
-                type="text"
-                placeholder="Cari mahasiswa..."
-                className="rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-cyan-400"
-              />
             </div>
 
             <div className="overflow-x-auto">
