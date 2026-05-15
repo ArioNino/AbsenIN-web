@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import Webcam from "react-webcam";
+import Swal from "sweetalert2";
 import Sidebar from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
 
@@ -26,19 +28,105 @@ type LogItem = {
   status: string;
 };
 
+type ActiveBap = {
+  id?: number;
+  id_kelas?: number;
+  id_mata_kuliah?: string;
+  nama_mk?: string;
+  mata_kuliah?: {
+    nama_mk?: string;
+    kode_mk?: string;
+  };
+  waktu_mulai?: string;
+  waktu_selesai?: string;
+  tanggal?: string;
+  pertemuan_ke?: number;
+  materi?: string;
+};
+
 const VIDEO_WIDTH = 640;
 const VIDEO_HEIGHT = 480;
 
 export default function PresensiRealtimePage() {
+  const router = useRouter();
+
   const [cameraOn, setCameraOn] = useState(false);
   const [loading, setLoading] = useState(false);
   const [lastFace, setLastFace] = useState<FaceResult | null>(null);
+  const [lastStatus, setLastStatus] = useState("-");
   const [logs, setLogs] = useState<LogItem[]>([]);
+  const [activeBap, setActiveBap] = useState<ActiveBap | null>(null);
 
   const cameraContainerRef = useRef<HTMLDivElement>(null);
   const webcamRef = useRef<Webcam>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const loadingRef = useRef(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    const storedBap = localStorage.getItem("active_bap");
+
+    if (!token) {
+      router.push("/login");
+      return;
+    }
+
+    if (!storedBap) {
+      Swal.fire({
+        icon: "warning",
+        title: "BAP belum dibuat",
+        text: "Silakan isi Berita Acara Perkuliahan terlebih dahulu sebelum membuka presensi.",
+        confirmButtonText: "Oke",
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+      }).then((result) => {
+        if (result.isConfirmed) {
+          router.push("/bap");
+        }
+      });
+
+      return;
+    }
+
+    setActiveBap(JSON.parse(storedBap));
+  }, [router]);
+
+  const handleEndSession = () => {
+    Swal.fire({
+      icon: "question",
+      title: "Akhiri sesi presensi?",
+      text: "BAP aktif akan ditutup dan Anda akan diarahkan kembali ke halaman BAP.",
+      showCancelButton: true,
+      confirmButtonText: "Ya, akhiri",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#ef4444",
+    }).then((result) => {
+      if (result.isConfirmed) {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+        }
+
+        setCameraOn(false);
+        setLastFace(null);
+        setLastStatus("-");
+        setLogs([]);
+
+        localStorage.removeItem("active_bap");
+
+        Swal.fire({
+          icon: "success",
+          title: "Sesi diakhiri",
+          text: "Sesi presensi berhasil diakhiri.",
+          timer: 1200,
+          showConfirmButton: false,
+        });
+
+        setTimeout(() => {
+          router.push("/bap");
+        }, 1200);
+      }
+    });
+  };
 
   const handleFullscreen = () => {
     if (!cameraContainerRef.current) return;
@@ -69,6 +157,21 @@ export default function PresensiRealtimePage() {
     };
   };
 
+  const getAttendanceStatus = () => {
+    if (!activeBap?.waktu_selesai) return "Hadir";
+
+    const now = new Date();
+    const [endHour, endMinute] = activeBap.waktu_selesai.split(":");
+
+    const endTime = new Date();
+    endTime.setHours(Number(endHour));
+    endTime.setMinutes(Number(endMinute));
+    endTime.setSeconds(0);
+    endTime.setMilliseconds(0);
+
+    return now > endTime ? "Terlambat" : "Hadir";
+  };
+
   const handleRecognize = async () => {
     if (loadingRef.current) return;
 
@@ -76,8 +179,14 @@ export default function PresensiRealtimePage() {
       loadingRef.current = true;
       setLoading(true);
 
-      const screenshot = webcamRef.current?.getScreenshot();
+      const token = localStorage.getItem("token");
 
+      if (!token) {
+        router.push("/login");
+        return;
+      }
+
+      const screenshot = webcamRef.current?.getScreenshot();
       if (!screenshot) return;
 
       const blob = await fetch(screenshot).then((res) => res.blob());
@@ -89,9 +198,18 @@ export default function PresensiRealtimePage() {
         "http://127.0.0.1:8000/face-recognition/recognize",
         {
           method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
           body: formData,
         }
       );
+
+      if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem("token");
+        router.push("/login");
+        return;
+      }
 
       const result = await response.json();
 
@@ -100,7 +218,6 @@ export default function PresensiRealtimePage() {
       }
 
       const face: FaceResult | null = result.data?.[0] ?? null;
-
       setLastFace(face);
 
       if (face) {
@@ -111,16 +228,22 @@ export default function PresensiRealtimePage() {
           minute: "2-digit",
         });
 
+        const status = face.recognized ? getAttendanceStatus() : "Unknown";
+
+        setLastStatus(status);
+
         const newLog: LogItem = {
           nama: face.nama ?? "Unknown Face",
           nim: face.nim ?? "-",
           prodi: face.prodi ?? "-",
           jam,
           confidence: `${(face.confidence * 100).toFixed(2)}%`,
-          status: face.recognized ? "Hadir" : "Unknown",
+          status,
         };
 
         setLogs((prev) => [newLog, ...prev].slice(0, 10));
+      } else {
+        setLastStatus("-");
       }
     } catch (error) {
       console.error(error);
@@ -133,6 +256,7 @@ export default function PresensiRealtimePage() {
   useEffect(() => {
     if (!cameraOn) {
       setLastFace(null);
+      setLastStatus("-");
 
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -150,13 +274,19 @@ export default function PresensiRealtimePage() {
         clearInterval(intervalRef.current);
       }
     };
-  }, [cameraOn]);
+  }, [cameraOn, activeBap]);
 
   const box = getScaledBox();
 
   const confidenceText = lastFace
     ? `${(lastFace.confidence * 100).toFixed(2)}%`
     : "-";
+
+  const namaMataKuliah =
+    activeBap?.mata_kuliah?.nama_mk ||
+    activeBap?.nama_mk ||
+    activeBap?.id_mata_kuliah ||
+    "-";
 
   return (
     <div className="flex min-h-screen bg-slate-100">
@@ -169,7 +299,6 @@ export default function PresensiRealtimePage() {
         />
 
         <div className="p-6 space-y-6">
-          {/* HERO */}
           <div className="rounded-3xl bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 text-white shadow-lg">
             <div className="flex flex-wrap items-center justify-between gap-5">
               <div>
@@ -196,12 +325,8 @@ export default function PresensiRealtimePage() {
                 </div>
 
                 <div className="rounded-2xl border border-white/10 bg-white/10 px-5 py-4 text-center">
-                  <p className="text-xl font-bold text-white">
-                    {logs.length}
-                  </p>
-                  <span className="text-xs text-slate-300">
-                    Scan Hari Ini
-                  </span>
+                  <p className="text-xl font-bold text-white">{logs.length}</p>
+                  <span className="text-xs text-slate-300">Scan Hari Ini</span>
                 </div>
 
                 <div className="rounded-2xl border border-white/10 bg-white/10 px-5 py-4 text-center">
@@ -212,9 +337,43 @@ export default function PresensiRealtimePage() {
             </div>
           </div>
 
-          {/* CONTENT */}
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-4 text-lg font-semibold text-slate-800">
+              Informasi BAP Aktif
+            </h2>
+
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-2xl bg-slate-100 p-4">
+                <p className="text-sm text-slate-500">Mata Kuliah</p>
+                <p className="font-semibold text-slate-800">{namaMataKuliah}</p>
+              </div>
+
+              <div className="rounded-2xl bg-slate-100 p-4">
+                <p className="text-sm text-slate-500">Pertemuan</p>
+                <p className="font-semibold text-slate-800">
+                  {activeBap?.pertemuan_ke
+                    ? `Pertemuan ke-${activeBap.pertemuan_ke}`
+                    : "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-slate-100 p-4">
+                <p className="text-sm text-slate-500">Waktu Mulai</p>
+                <p className="font-semibold text-slate-800">
+                  {activeBap?.waktu_mulai ?? "-"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-slate-100 p-4">
+                <p className="text-sm text-slate-500">Waktu Selesai</p>
+                <p className="font-semibold text-slate-800">
+                  {activeBap?.waktu_selesai ?? "-"}
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-            {/* CAMERA */}
             <div className="xl:col-span-2 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold text-slate-800">
@@ -238,6 +397,13 @@ export default function PresensiRealtimePage() {
                     className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
                   >
                     Full Screen
+                  </button>
+
+                  <button
+                    onClick={handleEndSession}
+                    className="rounded-xl bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600"
+                  >
+                    Akhiri Sesi
                   </button>
                 </div>
               </div>
@@ -307,7 +473,6 @@ export default function PresensiRealtimePage() {
               </div>
             </div>
 
-            {/* RIGHT */}
             <div className="space-y-6">
               <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <h3 className="mb-4 text-lg font-semibold text-slate-800">
@@ -335,7 +500,6 @@ export default function PresensiRealtimePage() {
 
                   <div className="rounded-2xl bg-slate-100 p-4">
                     <p className="text-sm text-slate-500">Nama</p>
-
                     <p className="font-medium text-slate-800">
                       {lastFace?.nama ?? "-"}
                     </p>
@@ -343,7 +507,6 @@ export default function PresensiRealtimePage() {
 
                   <div className="rounded-2xl bg-slate-100 p-4">
                     <p className="text-sm text-slate-500">NIM</p>
-
                     <p className="font-medium text-slate-800">
                       {lastFace?.nim ?? "-"}
                     </p>
@@ -351,7 +514,6 @@ export default function PresensiRealtimePage() {
 
                   <div className="rounded-2xl bg-slate-100 p-4">
                     <p className="text-sm text-slate-500">Program Studi</p>
-
                     <p className="font-medium text-slate-800">
                       {lastFace?.prodi ?? "-"}
                     </p>
@@ -359,51 +521,33 @@ export default function PresensiRealtimePage() {
 
                   <div className="rounded-2xl bg-slate-100 p-4">
                     <p className="text-sm text-slate-500">Confidence</p>
-
                     <p className="font-medium text-cyan-600">
                       {confidenceText}
                     </p>
                   </div>
 
-                  <div className="rounded-2xl border border-green-200 bg-green-50 p-4">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <p className="text-sm text-slate-500">Status</p>
 
-                    <span className="mt-1 inline-block rounded-full bg-green-200 px-3 py-1 text-xs font-medium text-green-800">
-                      {lastFace?.recognized ? "Hadir" : "-"}
+                    <span
+                      className={`mt-1 inline-block rounded-full px-3 py-1 text-xs font-medium ${
+                        lastStatus === "Hadir"
+                          ? "bg-green-200 text-green-800"
+                          : lastStatus === "Terlambat"
+                          ? "bg-yellow-200 text-yellow-800"
+                          : lastStatus === "Unknown"
+                          ? "bg-red-200 text-red-800"
+                          : "bg-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {lastStatus}
                     </span>
                   </div>
-                </div>
-              </div>
-
-              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="mb-4 text-lg font-semibold text-slate-800">
-                  Aktivitas Live
-                </h3>
-
-                <div className="space-y-4 text-sm">
-                  {logs.length === 0 ? (
-                    <p className="text-slate-500">
-                      Belum ada aktivitas realtime
-                    </p>
-                  ) : (
-                    logs.slice(0, 3).map((item, index) => (
-                      <div key={index}>
-                        <p className="font-medium text-slate-800">
-                          {item.nama}
-                        </p>
-
-                        <p className="text-slate-500">
-                          {item.status} • {item.jam}
-                        </p>
-                      </div>
-                    ))
-                  )}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* TABLE */}
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-semibold text-slate-800">

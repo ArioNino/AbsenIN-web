@@ -15,8 +15,8 @@ export default function BAPPage() {
 
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [mataKuliah, setMataKuliah] = useState([]);
-  const [kelas, setKelas] = useState([]);
+  const [mataKuliah, setMataKuliah] = useState<any[]>([]);
+  const [kelas, setKelas] = useState<any[]>([]);
 
   const [form, setForm] = useState({
     id_kelas: "",
@@ -35,6 +35,7 @@ export default function BAPPage() {
     localStorage.removeItem("token");
     localStorage.removeItem("token_type");
     localStorage.removeItem("user");
+    localStorage.removeItem("active_bap");
     router.push("/login");
   };
 
@@ -58,7 +59,7 @@ export default function BAPPage() {
       }
 
       setMataKuliah(result);
-    } catch (error) {
+    } catch (error: any) {
       Swal.fire({
         icon: "error",
         title: "Gagal",
@@ -87,7 +88,7 @@ export default function BAPPage() {
       }
 
       setKelas(result);
-    } catch (error) {
+    } catch (error: any) {
       Swal.fire({
         icon: "error",
         title: "Gagal",
@@ -109,7 +110,7 @@ export default function BAPPage() {
     fetchKelas();
   }, [router]);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (
@@ -170,25 +171,20 @@ export default function BAPPage() {
         throw new Error(result.detail || "Gagal menyimpan BAP");
       }
 
+      localStorage.setItem("active_bap", JSON.stringify(result));
+
       Swal.fire({
         icon: "success",
         title: "Berhasil",
-        text: "Berita acara berhasil disimpan",
+        text: "Berita acara berhasil disimpan. Anda akan diarahkan ke presensi.",
         timer: 1500,
         showConfirmButton: false,
       });
 
-      setForm({
-        id_kelas: "",
-        id_mata_kuliah: "",
-        waktu_mulai: "",
-        waktu_selesai: "",
-        tanggal: "",
-        pertemuan_ke: "",
-        materi: "",
-        catatan: "",
-      });
-    } catch (error) {
+      setTimeout(() => {
+        router.push("/presensi");
+      }, 1500);
+    } catch (error: any) {
       Swal.fire({
         icon: "error",
         title: "Gagal",
@@ -225,16 +221,13 @@ export default function BAPPage() {
       <Sidebar />
 
       <main className="flex-1 ml-60">
-        <Topbar
-          title="BAP Perkuliahan"
-          subtitle="Isi berita acara perkuliahan"
-        />
+        <Topbar title="BAP Perkuliahan" subtitle="Isi berita acara perkuliahan" />
 
         <div className="p-6 space-y-6">
           <div className="rounded-3xl bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 text-white shadow-lg">
             <h1 className="text-2xl font-bold">Berita Acara Perkuliahan</h1>
             <p className="text-sm text-slate-300 mt-2">
-              Isi laporan kegiatan perkuliahan
+              Isi laporan kegiatan perkuliahan sebelum melakukan presensi
             </p>
           </div>
 
@@ -246,9 +239,7 @@ export default function BAPPage() {
               <select
                 value={form.id_kelas}
                 className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100"
-                onChange={(e) =>
-                  setForm({ ...form, id_kelas: e.target.value })
-                }
+                onChange={(e) => setForm({ ...form, id_kelas: e.target.value })}
               >
                 <option value="">Pilih Kelas</option>
                 {kelas.map((item) => (
@@ -279,9 +270,7 @@ export default function BAPPage() {
                 type="date"
                 value={form.tanggal}
                 className="rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100"
-                onChange={(e) =>
-                  setForm({ ...form, tanggal: e.target.value })
-                }
+                onChange={(e) => setForm({ ...form, tanggal: e.target.value })}
               />
 
               <input
@@ -344,7 +333,7 @@ export default function BAPPage() {
                 disabled={loading}
                 className="rounded-xl bg-cyan-500 px-5 py-2 text-sm font-medium text-white hover:bg-cyan-600 disabled:opacity-50"
               >
-                {loading ? "Menyimpan..." : "Simpan BAP"}
+                {loading ? "Menyimpan..." : "Simpan BAP & Lanjut Presensi"}
               </button>
             </div>
           </form>

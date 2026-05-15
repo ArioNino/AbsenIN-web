@@ -17,10 +17,10 @@ export default function Topbar() {
           📅 {new Date().toLocaleDateString("id-ID")}
         </span>
 
-        <button className="w-9 h-9 flex items-center justify-center relative text-gray-600">
+        {/* <button className="w-9 h-9 flex items-center justify-center relative text-gray-600">
           🔔
           <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
-        </button>
+        </button> */}
 
         <button className="bg-black text-white px-4 py-2 rounded-lg text-sm">
           + Sesi Baru
