@@ -68,14 +68,15 @@ export default function Sidebar() {
           </span>
         </Link>
 
-        {/* <Link href="/riwayat" className={menuClass("/riwayat")}>
-          <span className="w-2 h-2 bg-white/20 rounded-full"></span>
-          Riwayat Kehadiran
-        </Link> */}
 
         <Link href="/bap" className={menuClass("/bap")}>
           <span className="w-2 h-2 bg-white/20 rounded-full"></span>
           Berita Acara Perkuliahan
+        </Link>
+
+        <Link href="/riwayat" className={menuClass("/riwayat")}>
+          <span className="w-2 h-2 bg-white/20 rounded-full"></span>
+          Riwayat Kehadiran
         </Link>
 
         <p className="text-white/30 text-xs px-3 mt-4 uppercase">Akademik</p>
