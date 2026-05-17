@@ -23,7 +23,6 @@ export default function MahasiswaPage() {
     id_mahasiswa: "",
     nim: "",
     nama: "",
-    kelas: "",
     prodi: "",
   });
 
@@ -120,7 +119,7 @@ export default function MahasiswaPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!form.nim || !form.nama || !form.kelas || !form.prodi) {
+    if (!form.nim || !form.nama || !form.prodi) {
       Swal.fire({
         icon: "warning",
         title: "Data belum lengkap",
@@ -143,7 +142,6 @@ export default function MahasiswaPage() {
         body: JSON.stringify({
           nim: form.nim,
           nama: form.nama,
-          kelas: form.kelas,
           prodi: form.prodi,
         }),
       });
@@ -312,7 +310,7 @@ export default function MahasiswaPage() {
                           {item.nim}
                         </td>
                         <td className="text-slate-700">{item.nama}</td>
-                        <td className="text-slate-700">{item.kelas}</td>
+                        <td className="text-slate-700">{item.nama_kelas ?? "-"}</td>
                         <td className="text-slate-700">{item.prodi}</td>
 
                         <td className="flex gap-2 py-3">

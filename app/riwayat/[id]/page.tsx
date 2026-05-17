@@ -24,6 +24,7 @@ export default function DetailRiwayatBAPPage() {
   const bapId = params.id as string;
 
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [rekap, setRekap] = useState<RekapItem[]>([]);
 
   const getToken = () => localStorage.getItem("token");
@@ -46,7 +47,7 @@ export default function DetailRiwayatBAPPage() {
           headers: {
             Authorization: `Bearer ${getToken()}`,
           },
-        },
+        }
       );
 
       const result = await response.json();
@@ -83,78 +84,81 @@ export default function DetailRiwayatBAPPage() {
     fetchRekap();
   }, [bapId]);
 
-  const handleChange = (
-    index: number,
-    field: "status" | "keterangan",
-    value: string,
-  ) => {
+  const handleChangeStatus = (index: number, value: string) => {
     const updated = [...rekap];
+
     updated[index] = {
       ...updated[index],
-      [field]: value,
+      status: value,
     };
 
     setRekap(updated);
   };
 
-  const handleSave = async (item: RekapItem) => {
-    try {
-      const token = getToken();
+  const saveItem = async (item: RekapItem) => {
+    const token = getToken();
 
-      if (!token) {
-        router.push("/login");
-        return;
-      }
+    if (!token) {
+      router.push("/login");
+      return;
+    }
 
-      let response;
+    let response;
 
-      if (item.id_kehadiran) {
-        response = await fetch(
-          `http://127.0.0.1:8000/kehadiran/${item.id_kehadiran}`,
-          {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              status: item.status,
-              keterangan: item.keterangan,
-            }),
-          },
-        );
-      } else {
-        response = await fetch("http://127.0.0.1:8000/kehadiran/", {
-          method: "POST",
+    if (item.id_kehadiran) {
+      response = await fetch(
+        `http://127.0.0.1:8000/kehadiran/${item.id_kehadiran}`,
+        {
+          method: "PUT",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            id_bap: Number(bapId),
-            id_mahasiswa: item.id_mahasiswa,
             status: item.status,
-            keterangan: item.keterangan,
           }),
-        });
-      }
+        }
+      );
+    } else {
+      response = await fetch("http://127.0.0.1:8000/kehadiran/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          id_bap: Number(bapId),
+          id_mahasiswa: item.id_mahasiswa,
+          status: item.status,
+        }),
+      });
+    }
 
-      const result = await response.json();
+    const result = await response.json();
 
-      if (response.status === 401 || response.status === 403) {
-        handleUnauthorized();
-        return;
-      }
+    if (response.status === 401 || response.status === 403) {
+      handleUnauthorized();
+      return;
+    }
 
-      if (!response.ok) {
-        throw new Error(result.detail || "Gagal menyimpan kehadiran");
+    if (!response.ok) {
+      throw new Error(result.detail || "Gagal menyimpan kehadiran");
+    }
+  };
+
+  const handleSaveAll = async () => {
+    try {
+      setSaving(true);
+
+      for (const item of rekap) {
+        await saveItem(item);
       }
 
       Swal.fire({
         icon: "success",
         title: "Berhasil",
-        text: "Data kehadiran berhasil disimpan",
-        timer: 1200,
+        text: "Seluruh data kehadiran berhasil disimpan",
+        timer: 1500,
         showConfirmButton: false,
       });
 
@@ -163,17 +167,19 @@ export default function DetailRiwayatBAPPage() {
       Swal.fire({
         icon: "error",
         title: "Gagal",
-        text: error.message || "Terjadi kesalahan",
+        text: error.message || "Terjadi kesalahan saat menyimpan data",
       });
+    } finally {
+      setSaving(false);
     }
   };
 
-  const getBadgeClass = (status: string) => {
-    if (status === "Hadir") return "bg-green-100 text-green-700";
-    if (status === "Terlambat") return "bg-yellow-100 text-yellow-700";
-    if (status === "Izin") return "bg-blue-100 text-blue-700";
-    if (status === "Sakit") return "bg-purple-100 text-purple-700";
-    return "bg-red-100 text-red-700";
+  const getSelectClass = (status: string) => {
+    if (status === "Hadir") return "border-green-200 text-green-700";
+    if (status === "Terlambat") return "border-yellow-200 text-yellow-700";
+    if (status === "Izin") return "border-blue-200 text-blue-700";
+    if (status === "Sakit") return "border-purple-200 text-purple-700";
+    return "border-red-200 text-red-700";
   };
 
   return (
@@ -224,8 +230,6 @@ export default function DetailRiwayatBAPPage() {
                     <th>NIM</th>
                     <th>Prodi</th>
                     <th>Status</th>
-                    <th>Keterangan</th>
-                    <th>Aksi</th>
                   </tr>
                 </thead>
 
@@ -233,7 +237,7 @@ export default function DetailRiwayatBAPPage() {
                   {loading ? (
                     <tr>
                       <td
-                        colSpan={6}
+                        colSpan={4}
                         className="py-6 text-center text-slate-500"
                       >
                         Memuat data...
@@ -242,7 +246,7 @@ export default function DetailRiwayatBAPPage() {
                   ) : rekap.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={6}
+                        colSpan={4}
                         className="py-6 text-center text-slate-500"
                       >
                         Data mahasiswa tidak ditemukan
@@ -266,10 +270,10 @@ export default function DetailRiwayatBAPPage() {
                           <select
                             value={item.status}
                             onChange={(e) =>
-                              handleChange(index, "status", e.target.value)
+                              handleChangeStatus(index, e.target.value)
                             }
-                            className={`rounded-full border-0 px-4 py-2 text-xs font-medium outline-none transition ${getBadgeClass(
-                              item.status,
+                            className={`rounded-full border bg-white px-4 py-2 text-xs font-medium outline-none transition focus:ring-2 focus:ring-cyan-400 ${getSelectClass(
+                              item.status
                             )}`}
                           >
                             {STATUS_OPTIONS.map((status) => (
@@ -279,34 +283,22 @@ export default function DetailRiwayatBAPPage() {
                             ))}
                           </select>
                         </td>
-
-                        <td>
-                          <input
-                            type="text"
-                            value={item.keterangan ?? ""}
-                            placeholder="Keterangan..."
-                            onChange={(e) =>
-                              handleChange(index, "keterangan", e.target.value)
-                            }
-                            className="w-64 rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-cyan-400"
-                          />
-                        </td>
-
-                        <td>
-                          <button
-                            onClick={() => handleSave(item)}
-                            className="rounded-xl bg-cyan-500 px-4 py-2 text-xs font-medium text-white hover:bg-cyan-600"
-                          >
-                            Simpan
-                          </button>
-                        </td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
             </div>
-          </div>
+              <div className="mt-6 flex justify-end">
+                <button
+                  onClick={handleSaveAll}
+                  disabled={saving || loading}
+                  className="rounded-xl bg-cyan-500 px-5 py-2 text-sm font-medium text-white hover:bg-cyan-600 disabled:opacity-50"
+                >
+                  {saving ? "Menyimpan..." : "Simpan Semua"}
+                </button>
+              </div>
+            </div>
         </div>
       </main>
     </div>
