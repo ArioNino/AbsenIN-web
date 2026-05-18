@@ -423,13 +423,7 @@ export default function DashboardPage() {
             />
           )}
 
-          {dailyTrend.length === 0 && !loading && (
-            <p className="mt-3 inline-flex items-center gap-1.5 text-[11px] text-slate-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-              Endpoint <code className="rounded bg-slate-100 px-1">/dashboard/daily-trend</code>{" "}
-              belum tersedia · menampilkan data hari ini saja.
-            </p>
-          )}
+
         </div>
 
         <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
