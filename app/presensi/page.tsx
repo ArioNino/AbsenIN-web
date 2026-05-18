@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Webcam from "react-webcam";
 import Swal from "sweetalert2";
 import Sidebar from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
+
+type FaceStatus = "Hadir" | "Terlambat" | "Unknown";
 
 type FaceResult = {
   face_index: number;
@@ -17,6 +19,18 @@ type FaceResult = {
   bbox: number[] | null;
   recognized: boolean;
   mahasiswa_found: boolean;
+  status: FaceStatus;
+  message?: string;
+};
+
+type RawRecognizeItem = {
+  face_index?: number;
+  nim?: string | null;
+  mahasiswa?: { nama?: string | null; prodi?: string | null } | null;
+  confidence?: number;
+  detection_confidence?: number | null;
+  bbox?: number[] | null;
+  message?: string;
 };
 
 type LogItem = {
@@ -47,20 +61,36 @@ type ActiveBap = {
 const VIDEO_WIDTH = 640;
 const VIDEO_HEIGHT = 480;
 
+// Frekuensi poll minimum antar request ke backend (ms).
+// Semakin kecil makin responsif tapi load backend naik.
+const MIN_GAP_MS = 350;
+
+// Window dedup log per identitas. Wajah yang sama tidak dilog ulang dalam jendela ini.
+const DEDUP_MS = 30_000;
+
+// Berapa kali backend boleh "miss" (tidak ada wajah) sebelum bbox di-clear.
+// Membantu mengurangi flicker saat detection sesekali gagal pada satu frame.
+const MISS_THRESHOLD = 2;
+
+// Resolusi grid (px frame asli) untuk dedup bucket wajah Unknown berdasarkan posisi bbox.
+const UNKNOWN_BUCKET_PX = 60;
+
 export default function PresensiRealtimePage() {
   const router = useRouter();
 
   const [cameraOn, setCameraOn] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [lastFace, setLastFace] = useState<FaceResult | null>(null);
-  const [lastStatus, setLastStatus] = useState("-");
+  const [lastFaces, setLastFaces] = useState<FaceResult[]>([]);
   const [logs, setLogs] = useState<LogItem[]>([]);
   const [activeBap, setActiveBap] = useState<ActiveBap | null>(null);
+  const [, setResizeTick] = useState(0);
 
   const cameraContainerRef = useRef<HTMLDivElement>(null);
   const webcamRef = useRef<Webcam>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const scheduleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingRef = useRef(false);
+  const recentLogKeysRef = useRef<Map<string, number>>(new Map());
+  const missCountRef = useRef(0);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -91,6 +121,13 @@ export default function PresensiRealtimePage() {
     setActiveBap(JSON.parse(storedBap));
   }, [router]);
 
+  const clearScheduled = () => {
+    if (scheduleRef.current) {
+      clearTimeout(scheduleRef.current);
+      scheduleRef.current = null;
+    }
+  };
+
   const handleEndSession = () => {
     Swal.fire({
       icon: "question",
@@ -102,14 +139,13 @@ export default function PresensiRealtimePage() {
       confirmButtonColor: "#ef4444",
     }).then((result) => {
       if (result.isConfirmed) {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-        }
+        clearScheduled();
 
         setCameraOn(false);
-        setLastFace(null);
-        setLastStatus("-");
+        setLastFaces([]);
         setLogs([]);
+        recentLogKeysRef.current.clear();
+        missCountRef.current = 0;
 
         localStorage.removeItem("active_bap");
 
@@ -138,26 +174,41 @@ export default function PresensiRealtimePage() {
     }
   };
 
-  const getScaledBox = () => {
-    if (!lastFace?.bbox || !cameraContainerRef.current) return null;
-
-    const [x1, y1, x2, y2] = lastFace.bbox;
-
-    const containerWidth = cameraContainerRef.current.clientWidth;
-    const containerHeight = cameraContainerRef.current.clientHeight;
-
-    const scaleX = containerWidth / VIDEO_WIDTH;
-    const scaleY = containerHeight / VIDEO_HEIGHT;
-
-    return {
-      left: x1 * scaleX,
-      top: y1 * scaleY,
-      width: (x2 - x1) * scaleX,
-      height: (y2 - y1) * scaleY,
-    };
+  const getNaturalSize = () => {
+    const video = webcamRef.current?.video as HTMLVideoElement | undefined;
+    const naturalW = video?.videoWidth || 0;
+    const naturalH = video?.videoHeight || 0;
+    return { naturalW, naturalH };
   };
 
-  const getStatusFromBackend = (message?: string) => {
+  const scaleBox = (bbox: number[] | null) => {
+    if (!bbox || !cameraContainerRef.current) return null;
+    if (bbox.length < 4) return null;
+
+    const [x1, y1, x2, y2] = bbox;
+    const containerWidth = cameraContainerRef.current.clientWidth;
+    const containerHeight = cameraContainerRef.current.clientHeight;
+    const { naturalW, naturalH } = getNaturalSize();
+
+    // Sebelum metadata video tersedia, jangan render bbox supaya tidak melenceng.
+    if (!naturalW || !naturalH) return null;
+
+    const scaleX = containerWidth / naturalW;
+    const scaleY = containerHeight / naturalH;
+
+    // Catatan: react-webcam dengan prop `mirrored` sudah mem-flip canvas pada
+    // getScreenshot(), sehingga gambar yang dikirim ke backend SUDAH sejajar
+    // dengan tampilan video di layar. Bbox dari backend mengacu ke ruang mirror
+    // tersebut, jadi koordinat dipakai apa adanya tanpa flip horizontal.
+    const left = x1 * scaleX;
+    const top = y1 * scaleY;
+    const width = (x2 - x1) * scaleX;
+    const height = (y2 - y1) * scaleY;
+
+    return { left, top, width, height };
+  };
+
+  const getStatusFromBackend = (message?: string): FaceStatus => {
     if (!message) return "Unknown";
 
     if (message.toLowerCase().includes("terlambat")) {
@@ -199,7 +250,7 @@ export default function PresensiRealtimePage() {
 
       const formData = new FormData();
       formData.append("id_bap", String(bap.id));
-      formData.append("mode", "single");
+      formData.append("mode", "multi");
       formData.append("file", blob, "face.jpg");
 
       const response = await fetch("http://127.0.0.1:8000/kehadiran/recognize", {
@@ -222,50 +273,94 @@ export default function PresensiRealtimePage() {
         throw new Error(result.detail || "Gagal deteksi wajah");
       }
 
-      const item = result.results?.[0] ?? null;
+      const items: RawRecognizeItem[] = Array.isArray(result.results)
+        ? (result.results as RawRecognizeItem[])
+        : [];
 
-      const face: FaceResult | null = item
-        ? {
-            face_index: item.face_index,
-            nim: item.nim,
-            nama: item.mahasiswa?.nama ?? null,
-            prodi: item.mahasiswa?.prodi ?? null,
-            confidence: item.confidence,
-            detection_confidence: item.detection_confidence,
-            bbox: item.bbox,
-            recognized: Boolean(item.mahasiswa),
-            mahasiswa_found: Boolean(item.mahasiswa),
-          }
-        : null;
+      const faces: FaceResult[] = items.map((item, idx) => {
+        const recognized = Boolean(item.mahasiswa);
+        return {
+          face_index:
+            typeof item.face_index === "number" ? item.face_index : idx,
+          nim: item.nim ?? null,
+          nama: item.mahasiswa?.nama ?? null,
+          prodi: item.mahasiswa?.prodi ?? null,
+          confidence: Number(item.confidence ?? 0),
+          detection_confidence:
+            typeof item.detection_confidence === "number"
+              ? item.detection_confidence
+              : null,
+          bbox: Array.isArray(item.bbox) ? item.bbox : null,
+          recognized,
+          mahasiswa_found: recognized,
+          status: recognized
+            ? getStatusFromBackend(item.message)
+            : ("Unknown" as FaceStatus),
+          message: item.message,
+        };
+      });
 
-      setLastFace(face);
+      // Tahan bbox terakhir saat backend miss 1 frame untuk kurangi flicker.
+      // Setelah lebih dari MISS_THRESHOLD frame berturut tanpa wajah, kosongkan.
+      if (faces.length === 0) {
+        missCountRef.current += 1;
+        if (missCountRef.current >= MISS_THRESHOLD) {
+          setLastFaces([]);
+        }
+      } else {
+        missCountRef.current = 0;
+        setLastFaces(faces);
+      }
 
-      if (face) {
-        const now = new Date();
-
-        const jam = now.toLocaleTimeString("id-ID", {
+      // Logging dengan dedup berdasarkan NIM (recognized) atau bucket bbox (unknown).
+      if (faces.length > 0) {
+        const now = Date.now();
+        const jam = new Date(now).toLocaleTimeString("id-ID", {
           hour: "2-digit",
           minute: "2-digit",
         });
 
-        const status = face.recognized
-          ? getStatusFromBackend(item?.message)
-          : "Unknown";
+        // Prune key yang sudah lewat window dedup agar Map tidak tumbuh tak terbatas.
+        for (const [k, t] of recentLogKeysRef.current) {
+          if (now - t > DEDUP_MS) recentLogKeysRef.current.delete(k);
+        }
 
-        setLastStatus(status);
+        const newLogs: LogItem[] = [];
+        faces.forEach((f) => {
+          let key: string | null;
+          if (f.recognized && f.nim) {
+            key = `nim:${f.nim}`;
+          } else if (f.bbox && f.bbox.length >= 4) {
+            // Bucket berdasarkan center bbox supaya unknown yang sama (posisi mirip)
+            // di-dedup, bukan tergantung face_index yang bisa berubah antar frame.
+            const [x1, y1, x2, y2] = f.bbox;
+            const cx = Math.floor(((x1 + x2) / 2) / UNKNOWN_BUCKET_PX);
+            const cy = Math.floor(((y1 + y2) / 2) / UNKNOWN_BUCKET_PX);
+            key = `unknown:${cx}:${cy}`;
+          } else {
+            // Tanpa bbox, jangan log (ambigu) untuk hindari spam.
+            key = null;
+          }
 
-        const newLog: LogItem = {
-          nama: face.nama ?? "Unknown Face",
-          nim: face.nim ?? "-",
-          prodi: face.prodi ?? "-",
-          jam,
-          confidence: `${(face.confidence * 100).toFixed(2)}%`,
-          status,
-        };
+          if (!key) return;
 
-        setLogs((prev) => [newLog, ...prev].slice(0, 10));
-      } else {
-        setLastStatus("-");
+          const last = recentLogKeysRef.current.get(key) ?? 0;
+          if (now - last < DEDUP_MS) return;
+
+          recentLogKeysRef.current.set(key, now);
+          newLogs.push({
+            nama: f.nama ?? "Unknown Face",
+            nim: f.nim ?? "-",
+            prodi: f.prodi ?? "-",
+            jam,
+            confidence: `${(f.confidence * 100).toFixed(2)}%`,
+            status: f.status,
+          });
+        });
+
+        if (newLogs.length) {
+          setLogs((prev) => [...newLogs, ...prev].slice(0, 50));
+        }
       }
     } catch (error) {
       console.error(error);
@@ -275,34 +370,82 @@ export default function PresensiRealtimePage() {
     }
   };
 
+  // Self-scheduling poll loop, anti pile-up.
+  // Memakai flag `cancelled` lokal per-effect (bukan ref bersama) sehingga
+  // toggle camera cepat tidak men-cancel loop yang baru dimulai.
   useEffect(() => {
     if (!cameraOn) {
-      setLastFace(null);
-      setLastStatus("-");
-
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-
+      clearScheduled();
+      setLastFaces([]);
+      recentLogKeysRef.current.clear();
+      missCountRef.current = 0;
       return;
     }
 
-    intervalRef.current = setInterval(() => {
-      handleRecognize();
-    }, 1500);
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      const t0 =
+        typeof performance !== "undefined" ? performance.now() : Date.now();
+
+      await handleRecognize();
+
+      if (cancelled) return;
+      const t1 =
+        typeof performance !== "undefined" ? performance.now() : Date.now();
+      const wait = Math.max(MIN_GAP_MS - (t1 - t0), 0);
+      scheduleRef.current = setTimeout(tick, wait);
+    };
+
+    tick();
 
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
+      cancelled = true;
+      clearScheduled();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraOn, activeBap]);
 
-  const box = getScaledBox();
+  // Re-render bbox saat ukuran container berubah (mis. fullscreen).
+  useEffect(() => {
+    const el = cameraContainerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
 
-  const confidenceText = lastFace
-    ? `${(lastFace.confidence * 100).toFixed(2)}%`
-    : "-";
+    const ro = new ResizeObserver(() => {
+      setResizeTick((n) => (n + 1) % 1_000_000);
+    });
+    ro.observe(el);
+
+    const onFullscreen = () => setResizeTick((n) => (n + 1) % 1_000_000);
+    document.addEventListener("fullscreenchange", onFullscreen);
+
+    return () => {
+      ro.disconnect();
+      document.removeEventListener("fullscreenchange", onFullscreen);
+    };
+  }, [cameraOn]);
+
+  const summary = useMemo(() => {
+    const total = lastFaces.length;
+    const recognized = lastFaces.filter((f) => f.recognized).length;
+    const unknown = total - recognized;
+    const hadir = lastFaces.filter((f) => f.status === "Hadir").length;
+    const terlambat = lastFaces.filter((f) => f.status === "Terlambat").length;
+
+    const recognizedConfs = lastFaces
+      .filter((f) => f.recognized)
+      .map((f) => f.confidence);
+    const avgConf =
+      recognizedConfs.length > 0
+        ? recognizedConfs.reduce((a, b) => a + b, 0) / recognizedConfs.length
+        : null;
+
+    return { total, recognized, unknown, hadir, terlambat, avgConf };
+  }, [lastFaces]);
+
+  const confidenceText =
+    summary.avgConf !== null ? `${(summary.avgConf * 100).toFixed(2)}%` : "-";
 
   const namaMataKuliah =
     activeBap?.mata_kuliah?.nama_mk ||
@@ -343,7 +486,7 @@ export default function PresensiRealtimePage() {
                   <p className="text-xl font-bold text-white">
                     {confidenceText}
                   </p>
-                  <span className="text-xs text-slate-300">Confidence</span>
+                  <span className="text-xs text-slate-300">Avg Confidence</span>
                 </div>
 
                 <div className="rounded-2xl border border-white/10 bg-white/10 px-5 py-4 text-center">
@@ -352,8 +495,10 @@ export default function PresensiRealtimePage() {
                 </div>
 
                 <div className="rounded-2xl border border-white/10 bg-white/10 px-5 py-4 text-center">
-                  <p className="text-xl font-bold text-white">1</p>
-                  <span className="text-xs text-slate-300">Kamera</span>
+                  <p className="text-xl font-bold text-white">
+                    {summary.total}
+                  </p>
+                  <span className="text-xs text-slate-300">Wajah Saat Ini</span>
                 </div>
               </div>
             </div>
@@ -440,6 +585,7 @@ export default function PresensiRealtimePage() {
                       ref={webcamRef}
                       audio={false}
                       mirrored
+                      forceScreenshotSourceSize
                       screenshotFormat="image/jpeg"
                       videoConstraints={{
                         width: VIDEO_WIDTH,
@@ -449,29 +595,46 @@ export default function PresensiRealtimePage() {
                       className="h-full w-full object-fill"
                     />
 
-                    {box && (
-                      <>
-                        <div
-                          className="absolute rounded-xl border-[3px] border-cyan-400 transition-all duration-200"
-                          style={{
-                            left: `${box.left}px`,
-                            top: `${box.top}px`,
-                            width: `${box.width}px`,
-                            height: `${box.height}px`,
-                          }}
-                        />
+                    {lastFaces.map((face, i) => {
+                      const box = scaleBox(face.bbox);
+                      if (!box) return null;
 
-                        <div
-                          className="absolute rounded-full bg-cyan-500 px-3 py-1 text-xs font-medium text-white shadow transition-all duration-200"
-                          style={{
-                            left: `${box.left}px`,
-                            top: `${Math.max(box.top - 36, 10)}px`,
-                          }}
-                        >
-                          {lastFace?.nama ?? "Unknown"} • {confidenceText}
-                        </div>
-                      </>
-                    )}
+                      const recognized = face.recognized;
+                      const borderColor = recognized
+                        ? "border-cyan-400"
+                        : "border-red-500";
+                      const labelBg = recognized
+                        ? "bg-cyan-500"
+                        : "bg-red-500";
+                      const label = recognized
+                        ? face.nama ?? "Unknown"
+                        : "Unknown";
+                      const conf = `${(face.confidence * 100).toFixed(0)}%`;
+
+                      return (
+                        <Fragment key={`face-${face.face_index}-${i}`}>
+                          <div
+                            className={`absolute rounded-xl border-[3px] ${borderColor} transition-[left,top,width,height] duration-100`}
+                            style={{
+                              left: `${box.left}px`,
+                              top: `${box.top}px`,
+                              width: `${box.width}px`,
+                              height: `${box.height}px`,
+                            }}
+                          />
+
+                          <div
+                            className={`absolute rounded-full ${labelBg} px-3 py-1 text-xs font-medium text-white shadow transition-[left,top] duration-100`}
+                            style={{
+                              left: `${box.left}px`,
+                              top: `${Math.max(box.top - 28, 6)}px`,
+                            }}
+                          >
+                            {label} • {conf}
+                          </div>
+                        </Fragment>
+                      );
+                    })}
 
                     <div className="absolute bottom-4 left-4 rounded-full bg-black/70 px-3 py-1 text-xs text-white">
                       CAM-01 • Ruang B3
@@ -497,74 +660,98 @@ export default function PresensiRealtimePage() {
 
             <div className="space-y-6">
               <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="mb-4 text-lg font-semibold text-slate-800">
-                  Hasil Deteksi
-                </h3>
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-slate-800">
+                    Hasil Deteksi
+                  </h3>
 
-                <div className="space-y-4">
-                  <div
-                    className={`rounded-2xl border p-4 ${
-                      lastFace?.recognized
-                        ? "border-green-200 bg-green-50"
-                        : "border-red-200 bg-red-50"
-                    }`}
-                  >
-                    <p className="text-sm text-slate-500">Status Deteksi</p>
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+                    Total {summary.total}
+                  </span>
+                </div>
 
-                    <p className="text-lg font-semibold text-slate-800">
-                      {!lastFace
-                        ? "Belum ada scan"
-                        : lastFace.recognized
-                        ? "Wajah dikenali"
-                        : "Wajah tidak dikenali"}
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  <div className="rounded-xl bg-green-50 p-3 text-center">
+                    <p className="text-lg font-bold text-green-700">
+                      {summary.hadir}
                     </p>
+                    <span className="text-[11px] text-green-700">Hadir</span>
                   </div>
 
-                  <div className="rounded-2xl bg-slate-100 p-4">
-                    <p className="text-sm text-slate-500">Nama</p>
-                    <p className="font-medium text-slate-800">
-                      {lastFace?.nama ?? "-"}
+                  <div className="rounded-xl bg-yellow-50 p-3 text-center">
+                    <p className="text-lg font-bold text-yellow-700">
+                      {summary.terlambat}
                     </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-slate-100 p-4">
-                    <p className="text-sm text-slate-500">NIM</p>
-                    <p className="font-medium text-slate-800">
-                      {lastFace?.nim ?? "-"}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-slate-100 p-4">
-                    <p className="text-sm text-slate-500">Program Studi</p>
-                    <p className="font-medium text-slate-800">
-                      {lastFace?.prodi ?? "-"}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-slate-100 p-4">
-                    <p className="text-sm text-slate-500">Confidence</p>
-                    <p className="font-medium text-cyan-600">
-                      {confidenceText}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-sm text-slate-500">Status</p>
-
-                    <span
-                      className={`mt-1 inline-block rounded-full px-3 py-1 text-xs font-medium ${
-                        lastStatus === "Hadir"
-                          ? "bg-green-200 text-green-800"
-                          : lastStatus === "Terlambat"
-                          ? "bg-yellow-200 text-yellow-800"
-                          : lastStatus === "Unknown"
-                          ? "bg-red-200 text-red-800"
-                          : "bg-slate-200 text-slate-700"
-                      }`}
-                    >
-                      {lastStatus}
+                    <span className="text-[11px] text-yellow-700">
+                      Terlambat
                     </span>
                   </div>
+
+                  <div className="rounded-xl bg-red-50 p-3 text-center">
+                    <p className="text-lg font-bold text-red-700">
+                      {summary.unknown}
+                    </p>
+                    <span className="text-[11px] text-red-700">Unknown</span>
+                  </div>
+                </div>
+
+                <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                  {lastFaces.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+                      <p className="text-sm text-slate-500">
+                        Belum ada wajah terdeteksi
+                      </p>
+                    </div>
+                  ) : (
+                    lastFaces.map((face, i) => (
+                      <div
+                        key={`detail-${face.face_index}-${i}`}
+                        className={`rounded-2xl border p-3 ${
+                          face.recognized
+                            ? "border-green-200 bg-green-50"
+                            : "border-red-200 bg-red-50"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-800">
+                              {face.nama ?? "Unknown Face"}
+                            </p>
+                            <p className="text-xs text-slate-600">
+                              {face.nim ?? "-"} · {face.prodi ?? "-"}
+                            </p>
+                          </div>
+
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                              face.status === "Hadir"
+                                ? "bg-green-200 text-green-800"
+                                : face.status === "Terlambat"
+                                ? "bg-yellow-200 text-yellow-800"
+                                : "bg-red-200 text-red-800"
+                            }`}
+                          >
+                            {face.status}
+                          </span>
+                        </div>
+
+                        <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
+                          <span>
+                            Conf:{" "}
+                            <span className="font-medium text-cyan-600">
+                              {(face.confidence * 100).toFixed(2)}%
+                            </span>
+                          </span>
+                          {face.detection_confidence !== null && (
+                            <span>
+                              Det:{" "}
+                              {(face.detection_confidence * 100).toFixed(0)}%
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
